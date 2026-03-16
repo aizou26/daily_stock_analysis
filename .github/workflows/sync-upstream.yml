@@ -1,0 +1,73 @@
+name: 🔄 Sync Upstream
+
+# 每天北京时间 08:00 自动同步，也可以手动触发
+on:
+  schedule:
+    - cron: '0 0 * * *'   # UTC 00:00 = 北京时间 08:00
+  workflow_dispatch:
+    inputs:
+      force_merge:
+        description: '强制合并（冲突时用 theirs 策略）'
+        required: false
+        default: 'false'
+
+jobs:
+  sync:
+    name: Sync from ZhuLinsen/daily_stock_analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: ⚙️ Config git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: 🔗 Add upstream remote
+        run: |
+          git remote add upstream https://github.com/ZhuLinsen/daily_stock_analysis.git || true
+          git fetch upstream main --tags
+
+      - name: 🔍 Check diff
+        id: diff
+        run: |
+          BEHIND=$(git rev-list HEAD..upstream/main --count)
+          echo "behind=$BEHIND" >> $GITHUB_OUTPUT
+          echo "上游领先 $BEHIND 个提交"
+
+      - name: ⏭️ Skip if already up-to-date
+        if: steps.diff.outputs.behind == '0'
+        run: echo "✅ 已是最新，无需同步"
+
+      - name: 🔀 Merge upstream (normal)
+        if: steps.diff.outputs.behind != '0' && github.event.inputs.force_merge != 'true'
+        run: |
+          git merge upstream/main \
+            --no-edit \
+            --allow-unrelated-histories \
+            -m "chore: sync from ZhuLinsen/daily_stock_analysis $(date +'%Y-%m-%d')"
+
+      - name: 🔀 Merge upstream (force theirs on conflict)
+        if: steps.diff.outputs.behind != '0' && github.event.inputs.force_merge == 'true'
+        run: |
+          git merge -X theirs upstream/main \
+            --no-edit \
+            --allow-unrelated-histories \
+            -m "chore: force-sync from ZhuLinsen/daily_stock_analysis $(date +'%Y-%m-%d')"
+
+      - name: 📤 Push to fork
+        if: steps.diff.outputs.behind != '0'
+        run: git push origin main
+
+      - name: 📝 Summary
+        if: steps.diff.outputs.behind != '0'
+        run: |
+          echo "### ✅ 同步完成" >> $GITHUB_STEP_SUMMARY
+          echo "- 上游领先: ${{ steps.diff.outputs.behind }} 个提交" >> $GITHUB_STEP_SUMMARY
+          echo "- 同步时间: $(date +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "- 上游仓库: [ZhuLinsen/daily_stock_analysis](https://github.com/ZhuLinsen/daily_stock_analysis)" >> $GITHUB_STEP_SUMMARY
